@@ -1,0 +1,96 @@
+name: Build Kernel Surya (KSU-Next + SUSFS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_next_tag:
+        description: "Tag KernelSU Next"
+        required: false
+        default: "v3.3.0"
+  push:
+    branches: [main]
+    paths:
+      - "build.sh"
+      - "configs/**"
+      - ".github/workflows/build-kernel.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repo (build.sh & configs)
+        uses: actions/checkout@v4
+
+      - name: Bebaskan ruang disk (kernel Android makan banyak disk)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
+          sudo apt-get clean
+          df -h
+
+      - name: Install dependencies (apt)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex libssl-dev libncurses5-dev \
+            build-essential ccache curl git kmod \
+            libelf-dev libncurses-dev libyaml-dev \
+            lz4 rsync unzip zip zstd \
+            device-tree-compiler python3 python-is-python3 \
+            pahole u-boot-tools
+
+      # Ubuntu 22.04 sudah tidak menyediakan libssl1.1 / beberapa lib lama
+      # yang kadang dibutuhkan host tool kernel jadul. Kalau muncul error
+      # "cannot find -lssl" / semacamnya, tambahkan step di bawah ini:
+      # - name: Install libssl1.1 legacy (fallback)
+      #   run: |
+      #     curl -LO http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2_amd64.deb
+      #     sudo dpkg -i libssl1.1_1.1.1f-1ubuntu2_amd64.deb
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: surya-perf-ksu-susfs
+          max-size: 2G
+
+      - name: Cache kernel source & toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            kernel
+            clang
+            gcc64
+            gcc32
+            susfs4ksu
+          key: surya-src-${{ github.event.inputs.ksu_next_tag || 'v3.3.0' }}-${{ hashFiles('build.sh') }}
+          restore-keys: |
+            surya-src-
+
+      - name: Jalankan build
+        run: |
+          chmod +x build.sh
+          export USE_CCACHE=1
+          export CCACHE_EXEC=$(which ccache)
+          ./build.sh
+
+      - name: Upload build log (selalu, buat debug kalau gagal)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 7
+
+      - name: Upload hasil kernel (Image, dtb)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-surya-perf-${{ github.run_number }}
+          path: artifacts/*
+          retention-days: 14
+          
