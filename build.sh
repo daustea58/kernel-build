@@ -133,6 +133,23 @@ echo "     ganti manual jadi string netral sebelum lanjut build)"
 # Terapkan config fragment (module opts, KSU, SUSFS, LOCALVERSION=-perf)
 CONFIG_FRAGMENT="${WORKSPACE}/configs/perf_extra.config"
 
+echo "==> Fix bug source Xiaomi: struct qpnp_qg kurang field 'profile_judge_done'"
+# Bug ini bukan dari KernelSU/SUSFS - file qpnp-qg.c memakai field yang tidak
+# dideklarasikan di header-nya sendiri (inkonsistensi bawaan source Xiaomi).
+# Cari definisi struct-nya di mana pun file itu berada, lalu sisipkan field
+# yang hilang tepat setelah "{" pembuka struct.
+QG_FILE=$(grep -rl "struct qpnp_qg {" drivers/power/supply/qcom/ 2>/dev/null | head -n1)
+if [ -n "${QG_FILE}" ]; then
+    if ! grep -q "profile_judge_done" "${QG_FILE}"; then
+        sed -i '/struct qpnp_qg {/a\	bool			profile_judge_done;' "${QG_FILE}"
+        echo "    -> Ditambahkan ke: ${QG_FILE}"
+    else
+        echo "    -> Sudah ada, skip."
+    fi
+else
+    echo "    !! Tidak ketemu struct qpnp_qg di drivers/power/supply/qcom/ - cek manual"
+fi
+
 # ------------------------------------------------------------------------- #
 # 6. FIX known build errors di Ubuntu 22.04 / GCC 11+ / Clang baru
 # ------------------------------------------------------------------------- #
